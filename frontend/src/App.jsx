@@ -9,6 +9,7 @@ import TaskDetail from './pages/TaskDetail';
 import ReviewList from './pages/ReviewList';
 import RectificationList from './pages/RectificationList';
 import BasicData from './pages/BasicData';
+import Workbench from './pages/Workbench';
 
 const ProtectedRoute = () => {
   const { user, loading } = useAuth();
@@ -76,7 +77,8 @@ function App() {
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route element={<ProtectedRoute />}>
-              <Route path="/" element={<Navigate to="/tasks" replace />} />
+              <Route path="/" element={<Navigate to="/workbench" replace />} />
+              <Route path="/workbench" element={<Workbench />} />
               <Route path="/tasks" element={<TaskList />} />
               <Route path="/tasks/:id" element={<TaskDetail />} />
               <Route path="/rectifications" element={<RectificationList />} />

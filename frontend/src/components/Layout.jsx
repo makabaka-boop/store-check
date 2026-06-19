@@ -5,7 +5,8 @@ import {
   UnorderedListOutlined, 
   DatabaseOutlined,
   CheckCircleOutlined,
-  WarningOutlined
+  WarningOutlined,
+  AppstoreOutlined
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -34,6 +35,12 @@ const AppLayout = ({ children }) => {
 
   const getMenuItems = () => {
     const items = [
+      {
+        key: '/workbench',
+        icon: <AppstoreOutlined />,
+        label: '整改闭环工作台',
+        onClick: () => navigate('/workbench'),
+      },
       {
         key: '/tasks',
         icon: <UnorderedListOutlined />,

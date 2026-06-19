@@ -3,6 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.contrib.auth.models import User
+from django.db.models import Q, Count
 from django.utils import timezone
 from .models import (
     Store, InspectionItem, TaskTemplate,
@@ -465,3 +466,174 @@ class SystemConfigViewSet(viewsets.ModelViewSet):
             defaults={'value': str(days)}
         )
         return Response({'key': config.key, 'value': int(config.value)})
+
+
+class WorkbenchViewSet(viewsets.ViewSet):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _scope_queryset(self, request):
+        user = request.user
+        role = user.profile.role
+        qs = InspectionTask.objects.all()
+        if role == 'executor':
+            qs = qs.filter(executor=user)
+        elif role == 'reviewer':
+            qs = qs.filter(reviewer=user)
+        return qs, role
+
+    def _filter_tasks(self, qs, role, request):
+        store_id = request.query_params.get('store_id')
+        if store_id:
+            qs = qs.filter(store_id=store_id)
+
+        executor_id = request.query_params.get('executor_id')
+        if executor_id:
+            qs = qs.filter(executor_id=executor_id)
+
+        task_status = request.query_params.get('status')
+        if task_status:
+            qs = qs.filter(status=task_status)
+
+        scope = request.query_params.get('scope')
+        if scope == 'pending_review':
+            qs = qs.filter(status='reviewing')
+        elif scope == 'rectifying':
+            qs = qs.filter(status='rejected')
+        elif scope == 'overdue':
+            qs = qs.filter(
+                status='rejected',
+                rectifications__submitted_at__isnull=True,
+                rectifications__rectification_deadline__lt=timezone.now(),
+            ).distinct()
+        elif scope == 'reminded':
+            qs = qs.filter(
+                rectifications__reminders__isnull=False,
+            ).exclude(status='finished').distinct()
+        elif scope == 'my_pending_rectify' and role == 'executor':
+            qs = qs.filter(status='rejected')
+        elif scope == 'my_reminded' and role == 'executor':
+            qs = qs.filter(
+                status='rejected',
+                rectifications__reminders__is_responded=False,
+            ).distinct()
+        elif scope == 'my_pending_review' and role == 'reviewer':
+            qs = qs.filter(status='reviewing')
+        elif scope == 'all_rectification':
+            qs = qs.filter(rectifications__isnull=False).distinct()
+
+        rectification_status_filter = request.query_params.get('rectification_status')
+        if rectification_status_filter:
+            ids = [t.id for t in qs if t.rectification_status == rectification_status_filter]
+            qs = qs.filter(id__in=ids)
+
+        overdue_only = request.query_params.get('overdue_only')
+        if overdue_only == 'true':
+            ids = []
+            for t in qs:
+                latest = t.rectifications.order_by('-round_number').first()
+                if latest and latest.is_overdue:
+                    ids.append(t.id)
+            qs = qs.filter(id__in=ids)
+
+        keyword = request.query_params.get('keyword')
+        if keyword:
+            qs = qs.filter(
+                Q(title__icontains=keyword) | Q(store__name__icontains=keyword)
+            )
+
+        return qs.order_by('-updated_at')
+
+    @action(detail=False, methods=['get'])
+    def summary(self, request):
+        user = request.user
+        role = user.profile.role
+        base_qs, _ = self._scope_queryset(request)
+
+        rect_tasks = base_qs.filter(rectifications__isnull=False).distinct()
+
+        rectifying_count = base_qs.filter(status='rejected').count()
+        pending_review_count = base_qs.filter(status='reviewing').count()
+        finished_count = base_qs.filter(status='finished').count()
+
+        overdue_count = 0
+        reminded_unresponded_count = 0
+        for t in rect_tasks:
+            latest = t.rectifications.order_by('-round_number').first()
+            if not latest:
+                continue
+            if latest.is_overdue and t.status == 'rejected':
+                overdue_count += 1
+            if ReminderRecord.objects.filter(
+                rectification=latest, is_responded=False
+            ).exists():
+                reminded_unresponded_count += 1
+
+        store_breakdown = []
+        store_ids = rect_tasks.values_list('store_id', flat=True).distinct()
+        for sid in store_ids:
+            store = Store.objects.filter(id=sid).first()
+            if not store:
+                continue
+            store_tasks = rect_tasks.filter(store_id=sid)
+            s_overdue = 0
+            for t in store_tasks:
+                latest = t.rectifications.order_by('-round_number').first()
+                if latest and latest.is_overdue and t.status == 'rejected':
+                    s_overdue += 1
+            store_breakdown.append({
+                'store_id': sid,
+                'store_name': store.name,
+                'total': store_tasks.count(),
+                'rectifying': store_tasks.filter(status='rejected').count(),
+                'pending_review': store_tasks.filter(status='reviewing').count(),
+                'overdue': s_overdue,
+            })
+        store_breakdown.sort(key=lambda x: (-x['overdue'], -x['rectifying']))
+
+        result = {
+            'role': role,
+            'total_rectification_tasks': rect_tasks.count(),
+            'rectifying_count': rectifying_count,
+            'pending_review_count': pending_review_count,
+            'overdue_count': overdue_count,
+            'reminded_unresponded_count': reminded_unresponded_count,
+            'finished_count': finished_count,
+            'store_breakdown': store_breakdown[:10],
+        }
+
+        if role == 'executor':
+            my_pending_rectify = base_qs.filter(status='rejected').count()
+            my_reminded = 0
+            for t in base_qs.filter(status='rejected'):
+                latest = t.rectifications.filter(submitted_at__isnull=True).order_by('-round_number').first()
+                if latest and latest.reminders.filter(is_responded=False).exists():
+                    my_reminded += 1
+            result['my_pending_rectify'] = my_pending_rectify
+            result['my_reminded'] = my_reminded
+        elif role == 'reviewer':
+            result['my_pending_review'] = base_qs.filter(status='reviewing').count()
+
+        return Response(result)
+
+    @action(detail=False, methods=['get'])
+    def tasks(self, request):
+        base_qs, role = self._scope_queryset(request)
+        qs = self._filter_tasks(base_qs, role, request)
+        serializer = InspectionTaskListSerializer(qs, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get'])
+    def store_options(self, request):
+        base_qs, _ = self._scope_queryset(request)
+        store_ids = base_qs.values_list('store_id', flat=True).distinct()
+        stores = Store.objects.filter(id__in=store_ids).values('id', 'name')
+        return Response(list(stores))
+
+    @action(detail=False, methods=['get'])
+    def executor_options(self, request):
+        base_qs, role = self._scope_queryset(request)
+        if role != 'manager':
+            return Response([])
+        executor_ids = base_qs.values_list('executor_id', flat=True).distinct()
+        users = User.objects.filter(id__in=executor_ids).values('id', 'username')
+        return Response(list(users))
