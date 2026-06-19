@@ -153,6 +153,7 @@ class InspectionTaskListSerializer(serializers.ModelSerializer):
     current_rectification_round = serializers.IntegerField(read_only=True)
     latest_rectification_submitted_at = serializers.SerializerMethodField()
     latest_rectification_is_overdue = serializers.SerializerMethodField()
+    latest_rectification_deadline = serializers.SerializerMethodField()
     reminder_count = serializers.SerializerMethodField()
     latest_reminder_at = serializers.SerializerMethodField()
     reminder_response_status = serializers.SerializerMethodField()
@@ -163,8 +164,8 @@ class InspectionTaskListSerializer(serializers.ModelSerializer):
                   'status', 'status_display', 'deadline', 'created_at', 'updated_at',
                   'executed_at', 'latest_reassignment_summary', 'rectification_status',
                   'current_rectification_round', 'latest_rectification_submitted_at',
-                  'latest_rectification_is_overdue', 'reminder_count', 'latest_reminder_at',
-                  'reminder_response_status']
+                  'latest_rectification_is_overdue', 'latest_rectification_deadline',
+                  'reminder_count', 'latest_reminder_at', 'reminder_response_status']
 
     def get_latest_reassignment_summary(self, obj):
         latest = obj.latest_reassignment
@@ -188,6 +189,10 @@ class InspectionTaskListSerializer(serializers.ModelSerializer):
     def get_latest_rectification_is_overdue(self, obj):
         latest = obj.rectifications.order_by('-round_number').first()
         return latest.is_overdue if latest else False
+
+    def get_latest_rectification_deadline(self, obj):
+        latest = obj.rectifications.order_by('-round_number').first()
+        return latest.rectification_deadline if latest else None
 
     def get_reminder_count(self, obj):
         from .models import ReminderRecord

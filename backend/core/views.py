@@ -425,6 +425,146 @@ class InspectionTaskViewSet(viewsets.ModelViewSet):
         serializer = ReminderRecordSerializer(reminder)
         return Response(serializer.data)
 
+    def _get_workbench_queryset(self, request):
+        user = request.user
+        role = user.profile.role
+
+        queryset = InspectionTask.objects.filter(
+            status__in=['rejected', 'reviewing']
+        )
+
+        if role == 'executor':
+            queryset = queryset.filter(executor=user)
+        elif role == 'reviewer':
+            queryset = queryset.filter(reviewer=user)
+
+        store_id = request.query_params.get('store_id')
+        if store_id:
+            queryset = queryset.filter(store_id=store_id)
+
+        executor_id = request.query_params.get('executor_id')
+        if executor_id:
+            queryset = queryset.filter(executor_id=executor_id)
+
+        rectification_status = request.query_params.get('rectification_status')
+        overdue_status = request.query_params.get('overdue_status')
+        reminder_status = request.query_params.get('reminder_status')
+
+        if rectification_status or overdue_status or reminder_status:
+            task_ids = []
+            for task in queryset:
+                r_status = task.rectification_status
+                latest_rect = task.rectifications.order_by('-round_number').first()
+                is_overdue = latest_rect.is_overdue if latest_rect else False
+
+                if rectification_status and r_status != rectification_status:
+                    continue
+
+                if overdue_status == 'overdue' and not is_overdue:
+                    continue
+                if overdue_status == 'not_overdue' and is_overdue:
+                    continue
+
+                if reminder_status:
+                    if not latest_rect:
+                        if reminder_status != 'no_reminder':
+                            continue
+                    else:
+                        reminders = ReminderRecord.objects.filter(rectification=latest_rect)
+                        if reminder_status == 'no_reminder' and reminders.exists():
+                            continue
+                        elif reminder_status == 'unresponded' and (not reminders.exists() or not reminders.filter(is_responded=False).exists()):
+                            continue
+                        elif reminder_status == 'responded' and (not reminders.exists() or reminders.filter(is_responded=False).exists()):
+                            continue
+
+                task_ids.append(task.id)
+            queryset = queryset.filter(id__in=task_ids)
+
+        return queryset
+
+    @action(detail=False, methods=['get'])
+    def workbench_summary(self, request):
+        queryset = self._get_workbench_queryset(request)
+        role = request.user.profile.role
+
+        total = queryset.count()
+
+        rectifying = 0
+        pending_review = 0
+        overdue = 0
+        reminded = 0
+        unresponded_reminder = 0
+
+        for task in queryset:
+            r_status = task.rectification_status
+            latest_rect = task.rectifications.order_by('-round_number').first()
+            is_overdue = latest_rect.is_overdue if latest_rect else False
+
+            if r_status == 'rectifying':
+                rectifying += 1
+                if is_overdue:
+                    overdue += 1
+            elif r_status == 'pending_review':
+                pending_review += 1
+
+            if latest_rect:
+                reminders = ReminderRecord.objects.filter(rectification=latest_rect)
+                if reminders.exists():
+                    reminded += 1
+                    if reminders.filter(is_responded=False).exists():
+                        unresponded_reminder += 1
+
+        my_pending_rectification = 0
+        my_pending_review = 0
+        my_reminded = 0
+
+        if role == 'executor':
+            for task in queryset:
+                if task.rectification_status == 'rectifying':
+                    my_pending_rectification += 1
+                    latest_rect = task.rectifications.order_by('-round_number').first()
+                    if latest_rect:
+                        reminders = ReminderRecord.objects.filter(rectification=latest_rect)
+                        if reminders.filter(is_responded=False).exists():
+                            my_reminded += 1
+        elif role == 'reviewer':
+            for task in queryset:
+                if task.rectification_status == 'pending_review':
+                    my_pending_review += 1
+
+        return Response({
+            'total': total,
+            'rectifying': rectifying,
+            'pending_review': pending_review,
+            'overdue': overdue,
+            'reminded': reminded,
+            'unresponded_reminder': unresponded_reminder,
+            'my_pending_rectification': my_pending_rectification,
+            'my_pending_review': my_pending_review,
+            'my_reminded': my_reminded,
+        })
+
+    @action(detail=False, methods=['get'])
+    def workbench_tasks(self, request):
+        queryset = self._get_workbench_queryset(request)
+        queryset = queryset.order_by('-created_at')
+        page = int(request.query_params.get('page', 1))
+        page_size = int(request.query_params.get('page_size', 20))
+        start = (page - 1) * page_size
+        end = start + page_size
+
+        total = queryset.count()
+        tasks = queryset[start:end]
+
+        serializer = InspectionTaskListSerializer(tasks, many=True)
+        return Response({
+            'count': total,
+            'results': serializer.data,
+            'page': page,
+            'page_size': page_size,
+        })
+
 
 class TaskItemResultViewSet(viewsets.ModelViewSet):
     queryset = TaskItemResult.objects.all()
