@@ -3,7 +3,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     UserViewSet, StoreViewSet, InspectionItemViewSet,
     TaskTemplateViewSet, InspectionTaskViewSet, TaskItemResultViewSet,
-    SystemConfigViewSet
+    SystemConfigViewSet, WorkbenchViewSet
 )
 
 router = DefaultRouter()
@@ -14,6 +14,7 @@ router.register(r'task-templates', TaskTemplateViewSet)
 router.register(r'tasks', InspectionTaskViewSet)
 router.register(r'task-results', TaskItemResultViewSet)
 router.register(r'system-config', SystemConfigViewSet)
+router.register(r'workbench', WorkbenchViewSet, basename='workbench')
 
 urlpatterns = [
     path('', include(router.urls)),

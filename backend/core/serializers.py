@@ -347,6 +347,85 @@ class BatchTaskCreateSerializer(serializers.Serializer):
     rectification_deadline_days = serializers.IntegerField(required=False, default=3)
 
 
+class WorkbenchTaskSerializer(serializers.ModelSerializer):
+    store_name = serializers.CharField(source='store.name', read_only=True)
+    executor_name = serializers.CharField(source='executor.username', read_only=True)
+    reviewer_name = serializers.CharField(source='reviewer.username', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    rectification_status = serializers.CharField(read_only=True)
+    current_rectification_round = serializers.IntegerField(read_only=True)
+    latest_rectification_deadline = serializers.SerializerMethodField()
+    latest_rectification_is_overdue = serializers.SerializerMethodField()
+    reminder_count = serializers.SerializerMethodField()
+    latest_reminder_at = serializers.SerializerMethodField()
+    has_unresponded_reminder = serializers.SerializerMethodField()
+    latest_reminder_note = serializers.SerializerMethodField()
+    latest_reminder_id = serializers.SerializerMethodField()
+
+    class Meta:
+        model = InspectionTask
+        fields = ['id', 'title', 'store', 'store_name', 'executor', 'executor_name',
+                  'reviewer', 'reviewer_name', 'status', 'status_display',
+                  'rectification_status', 'current_rectification_round',
+                  'latest_rectification_deadline', 'latest_rectification_is_overdue',
+                  'reminder_count', 'latest_reminder_at', 'has_unresponded_reminder',
+                  'latest_reminder_note', 'latest_reminder_id', 'created_at',
+                  'updated_at', 'executed_at']
+
+    def get_latest_rectification_deadline(self, obj):
+        latest = obj.rectifications.order_by('-round_number').first()
+        return latest.rectification_deadline if latest else None
+
+    def get_latest_rectification_is_overdue(self, obj):
+        latest = obj.rectifications.order_by('-round_number').first()
+        return latest.is_overdue if latest else False
+
+    def get_reminder_count(self, obj):
+        latest_rect = obj.rectifications.order_by('-round_number').first()
+        if not latest_rect:
+            return 0
+        return ReminderRecord.objects.filter(rectification=latest_rect).count()
+
+    def get_latest_reminder_at(self, obj):
+        latest_rect = obj.rectifications.order_by('-round_number').first()
+        if not latest_rect:
+            return None
+        latest = ReminderRecord.objects.filter(rectification=latest_rect).order_by('-created_at').first()
+        return latest.created_at if latest else None
+
+    def get_has_unresponded_reminder(self, obj):
+        latest_rect = obj.rectifications.order_by('-round_number').first()
+        if not latest_rect:
+            return False
+        return ReminderRecord.objects.filter(rectification=latest_rect, is_responded=False).exists()
+
+    def get_latest_reminder_note(self, obj):
+        latest_rect = obj.rectifications.order_by('-round_number').first()
+        if not latest_rect:
+            return None
+        latest = ReminderRecord.objects.filter(rectification=latest_rect).order_by('-created_at').first()
+        return latest.note if latest else None
+
+    def get_latest_reminder_id(self, obj):
+        latest_rect = obj.rectifications.order_by('-round_number').first()
+        if not latest_rect:
+            return None
+        latest = ReminderRecord.objects.filter(rectification=latest_rect).order_by('-created_at').first()
+        return latest.id if latest else None
+
+
+class WorkbenchSummarySerializer(serializers.Serializer):
+    total_tasks = serializers.IntegerField()
+    pending_rectification = serializers.IntegerField()
+    pending_review = serializers.IntegerField()
+    overdue_count = serializers.IntegerField()
+    reminded_count = serializers.IntegerField()
+    unresponded_reminder_count = serializers.IntegerField()
+    my_pending_rectification = serializers.IntegerField(required=False)
+    my_pending_review = serializers.IntegerField(required=False)
+    my_reminded = serializers.IntegerField(required=False)
+
+
 class SystemConfigSerializer(serializers.ModelSerializer):
     class Meta:
         model = SystemConfig
