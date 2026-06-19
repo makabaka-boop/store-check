@@ -1,22 +1,50 @@
-import { Layout, Menu, Avatar, Dropdown, Space, Typography } from 'antd';
+import { Layout, Menu, Avatar, Dropdown, Space, Typography, Badge } from 'antd';
 import { 
   UserOutlined, 
   LogoutOutlined, 
   UnorderedListOutlined, 
   DatabaseOutlined,
   CheckCircleOutlined,
-  WarningOutlined
+  WarningOutlined,
+  DashboardOutlined
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useState, useEffect } from 'react';
+import api from '../utils/api';
 
 const { Header, Sider, Content } = Layout;
 const { Title } = Typography;
 
 const AppLayout = ({ children }) => {
-  const { user, logout, isManager, isReviewer } = useAuth();
+  const { user, logout, isManager, isReviewer, isExecutor } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const [workbenchCount, setWorkbenchCount] = useState(0);
+
+  const fetchWorkbenchCount = async () => {
+    try {
+      const response = await api.get('/tasks/workbench_summary/');
+      const data = response.data;
+      let count = 0;
+      if (isExecutor()) {
+        count = data.my_pending_rectification + data.my_reminded;
+      } else if (isReviewer()) {
+        count = data.my_pending_review;
+      } else if (isManager()) {
+        count = data.overdue + data.pending_review;
+      }
+      setWorkbenchCount(count);
+    } catch (error) {
+      console.error('获取待办数量失败', error);
+    }
+  };
+
+  useEffect(() => {
+    fetchWorkbenchCount();
+    const interval = setInterval(fetchWorkbenchCount, 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   const handleLogout = () => {
     logout();
@@ -34,6 +62,16 @@ const AppLayout = ({ children }) => {
 
   const getMenuItems = () => {
     const items = [
+      {
+        key: '/workbench',
+        icon: <DashboardOutlined />,
+        label: (
+          <Badge count={workbenchCount} size="small" offset={[10, 0]}>
+            整改工作台
+          </Badge>
+        ),
+        onClick: () => navigate('/workbench'),
+      },
       {
         key: '/tasks',
         icon: <UnorderedListOutlined />,
