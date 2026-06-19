@@ -4,6 +4,7 @@ import zhCN from 'antd/locale/zh_CN';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import AppLayout from './components/Layout';
 import Login from './pages/Login';
+import Workbench from './pages/Workbench';
 import TaskList from './pages/TaskList';
 import TaskDetail from './pages/TaskDetail';
 import ReviewList from './pages/ReviewList';
@@ -76,7 +77,8 @@ function App() {
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route element={<ProtectedRoute />}>
-              <Route path="/" element={<Navigate to="/tasks" replace />} />
+              <Route path="/" element={<Navigate to="/workbench" replace />} />
+              <Route path="/workbench" element={<Workbench />} />
               <Route path="/tasks" element={<TaskList />} />
               <Route path="/tasks/:id" element={<TaskDetail />} />
               <Route path="/rectifications" element={<RectificationList />} />
